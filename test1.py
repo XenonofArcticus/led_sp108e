@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Connect to a SP108E and send the same packets as sniffed, printing any
+# Connect to a SP108E and send the same packets as sniffed,
 # printing any replies
 
 import argparse
@@ -10,13 +10,14 @@ import random
 
 import commands as cmd
 import structures
+import time
 
 
 def txn(sock, sendbytes):
     """ Perform a tx transaction """
 
     # TODO - if verbose
-    print("> {}".format(sendbytes.hex()))
+    #print("> {}".format(sendbytes.hex()))
 
     sock.send(sendbytes)
 
@@ -40,9 +41,9 @@ def txn_sync(sock, sendbytes):
 
 def txn_sync_expect(sock, sendbytes, expectbytes):
     """ Perform a txn_sync() and confirm the result is as expected """
-    r = txn_sync(sock, sendbytes)
-    assert(r == expectbytes)
-    return r
+    txn_sync(sock, sendbytes)
+    #assert(r == expectbytes)
+    return# r
 
 
 def cmd_check_device(sock, challenge):
@@ -120,6 +121,43 @@ def test_frame(dotcount, firstrandom, firstfill):
     return a
 
 
+def flag_frame(dotcount, stripelength, step=0):
+    """Generate a single frame to send to the array"""
+    maxlen = 900        # Number of bytes in a frame
+    stride = (maxlen // 3) // dotcount * 3
+
+    offset = 0   # address of first non blank pixel
+    pixelcount = 0
+    inputpixeloffset = step
+    maxdots = dotcount*stride     # address of first non displayed pixel
+    maxstripe = stripelength * stride
+
+    redfill = structures.RGB(0xff, 0, 0)
+    whitefill = structures.RGB(0xff, 0xff, 0xff)
+    bluefill = structures.RGB(0, 0, 0x60)
+
+    a = bytearray(maxlen)
+
+    while offset < maxstripe:
+        if(inputpixeloffset % 8 >= 4):
+            a[offset:offset+3] = whitefill.bytes
+        else:
+            a[offset:offset+3] = redfill.bytes
+        offset += stride
+        inputpixeloffset+=1
+
+    while offset < maxdots:
+        if(inputpixeloffset % 5 == 0):
+            a[offset:offset+3] = whitefill.bytes
+        else:
+            a[offset:offset+3] = bluefill.bytes
+        offset += stride
+        inputpixeloffset+=1
+    
+
+
+    return a
+
 def subc_testpreview(sock, args):
     """Try to send video"""
     dotcount = int(args.subc_args[0], 0)
@@ -133,6 +171,22 @@ def subc_testpreview(sock, args):
         # TODO - split array up into bits that are MSS rounded down to nearest
         # 15 byte boundary and hope to solve the MTU issue
         txn_sync_expect(sock, a, b'\x31')
+
+def subc_flagpreview(sock, args):
+    """Try to send flag video"""
+    dotcount = int(args.subc_args[0], 0)
+    firstrandom = int(args.subc_args[1], 0)
+
+    txn_sync_expect(sock, cmd.frame(cmd.CMD_CUSTOM_PREVIEW, None), b'\x31')
+
+    while True:
+        for i in range(1000):
+            a = flag_frame(dotcount, firstrandom, i)
+            # TODO - split array up into bits that are MSS rounded down to nearest
+            # 15 byte boundary and hope to solve the MTU issue
+            #txn_sync_expect(sock, a, b'\x31')
+            txn(sock, a)
+            time.sleep(1)
 
 
 def subc_brightness(sock, args):
@@ -291,12 +345,13 @@ subc_cmds = {
     'status':  subc_status,
     'testcmd': subc_testcmd,
     'testpreview': subc_testpreview,
+    'flagpreview': subc_flagpreview,
 }
 
 
 def do_options():
     a = argparse.ArgumentParser('Reverse Engineer Protocol for SP108E')
-    a.add_argument('-H', '--host', action='store', default='192.168.4.1')
+    a.add_argument('-H', '--host', action='store', default='172.19.3.205')
     a.add_argument('-p', '--port', action='store', default='8189')
 
     subc = a.add_subparsers(help='Subcommand', dest='cmd')
