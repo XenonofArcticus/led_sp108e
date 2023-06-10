@@ -11,6 +11,7 @@ import random
 import commands as cmd
 import structures
 import time
+import cv2
 
 
 def txn(sock, sendbytes):
@@ -158,6 +159,28 @@ def flag_frame(dotcount, stripelength, step=0):
 
     return a
 
+def image_frame(dotcount, row, inputimage):
+    """Generate a single frame to send to the array"""
+    maxlen = 900        # Number of bytes in a frame
+    stride = (maxlen // 3) // dotcount * 3
+    stripelength = 60
+
+    offset = 0   # address of first non blank pixel
+    pixelcount = 0
+    inputpixeloffset = 0
+    maxdots = dotcount*stride     # address of first non displayed pixel
+
+    a = bytearray(maxlen)
+
+    while offset < maxdots:
+        b,g,r = (inputimage[inputpixeloffset, row])
+        colorpixel = structures.RGB(r, g, b)
+        a[offset:offset+3] = colorpixel.bytes
+        offset += stride
+        inputpixeloffset+=1
+
+    return a
+
 def subc_testpreview(sock, args):
     """Try to send video"""
     dotcount = int(args.subc_args[0], 0)
@@ -187,6 +210,34 @@ def subc_flagpreview(sock, args):
             #txn_sync_expect(sock, a, b'\x31')
             txn(sock, a)
             time.sleep(1)
+
+def subc_imagepreview(sock, args):
+    """Try to send image video"""
+    dotcount = int(args.subc_args[0], 0)
+    imagename = args.subc_args[1]
+    
+    
+    colorimage = cv2.imread(imagename, cv2.IMREAD_COLOR)
+    
+    origdims = colorimage.shape
+    width = origdims[0]
+    ratio = float(dotcount) / float(width)
+    newdims = (int(origdims[0] * ratio), int(origdims[1] * ratio))
+    resizedimage = cv2.resize(colorimage, newdims, cv2.INTER_LINEAR)
+    cv2.imshow("image", colorimage)
+
+    txn_sync_expect(sock, cmd.frame(cmd.CMD_CUSTOM_PREVIEW, None), b'\x31')
+
+    while True:
+        for i in range(newdims[1]):
+            cv2.waitKey(1)
+            a = image_frame(dotcount, i, resizedimage)
+            # TODO - split array up into bits that are MSS rounded down to nearest
+            # 15 byte boundary and hope to solve the MTU issue
+            #txn_sync_expect(sock, a, b'\x31')
+            txn(sock, a)
+            time.sleep(0.5)
+
 
 
 def subc_brightness(sock, args):
@@ -346,6 +397,7 @@ subc_cmds = {
     'testcmd': subc_testcmd,
     'testpreview': subc_testpreview,
     'flagpreview': subc_flagpreview,
+    'imagepreview': subc_imagepreview,
 }
 
 
